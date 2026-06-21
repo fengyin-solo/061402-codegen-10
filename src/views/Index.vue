@@ -40,6 +40,52 @@
         </div>
       </div>
       
+      <div class="companion-panel">
+        <h3>🐾 驯养伙伴</h3>
+        <div class="companion-buffs" v-if="tamedCompanions.length > 0">
+          <div class="buff-tag" v-if="scoutingLevel > 0">
+            🔍 侦查 Lv.{{ scoutingLevel }}
+          </div>
+          <div class="buff-tag" v-if="carryingLevel > 0">
+            🎒 搬运 Lv.{{ carryingLevel }}
+          </div>
+          <div class="buff-tag" v-if="alertLevel > 0">
+            🛡️ 警戒 Lv.{{ alertLevel }}
+          </div>
+        </div>
+        <div class="companion-section" v-if="tamedCompanions.length > 0">
+          <h4>已驯养伙伴</h4>
+          <div class="companion-grid">
+            <div v-for="companion in tamedCompanions" :key="companion.id" class="companion-card tamed">
+              <div class="companion-icon">{{ companion.icon }}</div>
+              <div class="companion-info">
+                <div class="companion-name">{{ companion.name }}</div>
+                <div class="companion-ability">{{ companion.abilityLabel }}</div>
+                <div class="companion-upkeep">每日消耗: {{ companion.upkeep }}食物</div>
+              </div>
+              <el-button size="small" type="danger" @click="releaseCompanion(companion)">放归</el-button>
+            </div>
+          </div>
+        </div>
+        <div class="companion-section">
+          <h4>可驯养动物</h4>
+          <div class="companion-grid">
+            <div v-for="animal in availableWildAnimals" :key="animal.id" class="companion-card wild">
+              <div class="companion-icon">{{ animal.icon }}</div>
+              <div class="companion-info">
+                <div class="companion-name">{{ animal.name }}</div>
+                <div class="companion-ability">{{ animal.abilityLabel }}</div>
+                <div class="companion-ability-desc">{{ animal.abilityDesc }}</div>
+                <div class="companion-upkeep">驯养需要: {{ animal.tameCost }}食物 | 每日消耗: {{ animal.upkeep }}食物</div>
+              </div>
+              <el-button size="small" type="success" @click="tameAnimal(animal)" :disabled="resources.food < animal.tameCost">
+                驯养
+              </el-button>
+            </div>
+          </div>
+        </div>
+      </div>
+      
       <div class="actions-panel">
         <h3>📋 可执行操作</h3>
         
@@ -93,7 +139,7 @@
         <div class="map-container">
           <div class="map-grid">
             <div v-for="(cell, index) in mapGrid" :key="index" 
-                 :class="'map-cell ' + cell.type"
+                 :class="'map-cell ' + cell.type + (cell.explored ? ' explored' : '')"
                  @click="exploreCell(index)">
               {{ cell.icon }}
             </div>
@@ -133,8 +179,71 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { ElMessage, ElMessageBox } from 'element-plus';
+
+const ANIMAL_CATALOG = [
+  {
+    id: 'eagle',
+    name: '鹰',
+    icon: '🦅',
+    ability: 'scouting',
+    abilityLabel: '侦查',
+    abilityDesc: '提升探索收益，降低遭遇危险的概率',
+    tameCost: 40,
+    upkeep: 3
+  },
+  {
+    id: 'falcon',
+    name: '猎隼',
+    icon: '🦅',
+    ability: 'scouting',
+    abilityLabel: '侦查',
+    abilityDesc: '大幅提升探索收益，降低遭遇危险的概率',
+    tameCost: 60,
+    upkeep: 5
+  },
+  {
+    id: 'ox',
+    name: '野牛',
+    icon: '🐂',
+    ability: 'carrying',
+    abilityLabel: '搬运',
+    abilityDesc: '降低资源采集消耗，提升采集产量',
+    tameCost: 50,
+    upkeep: 4
+  },
+  {
+    id: 'mule',
+    name: '骡子',
+    icon: '🐴',
+    ability: 'carrying',
+    abilityLabel: '搬运',
+    abilityDesc: '大幅降低资源采集消耗，提升采集产量',
+    tameCost: 45,
+    upkeep: 3
+  },
+  {
+    id: 'hound',
+    name: '猎犬',
+    icon: '🐕',
+    ability: 'alert',
+    abilityLabel: '警戒',
+    abilityDesc: '降低探索危险损失，减少营地被袭概率',
+    tameCost: 35,
+    upkeep: 3
+  },
+  {
+    id: 'wolf',
+    name: '狼',
+    icon: '🐺',
+    ability: 'alert',
+    abilityLabel: '警戒',
+    abilityDesc: '大幅降低探索危险损失，减少营地被袭概率',
+    tameCost: 55,
+    upkeep: 5
+  }
+];
 
 const resources = ref({
   food: 100,
@@ -146,6 +255,41 @@ const resources = ref({
 const messageLog = ref([
   { time: '00:00', content: '你来到了一个荒岛，开始你的生存之旅吧！' }
 ]);
+
+const tamedCompanions = ref([]);
+
+const scoutingLevel = computed(() => {
+  return tamedCompanions.value.filter(c => c.ability === 'scouting').length;
+});
+
+const carryingLevel = computed(() => {
+  return tamedCompanions.value.filter(c => c.ability === 'carrying').length;
+});
+
+const alertLevel = computed(() => {
+  return tamedCompanions.value.filter(c => c.ability === 'alert').length;
+});
+
+const carryingMultiplier = computed(() => {
+  return 1 + carryingLevel.value * 0.3;
+});
+
+const carryingDiscount = computed(() => {
+  return 1 - Math.min(carryingLevel.value * 0.15, 0.45);
+});
+
+const dangerReduction = computed(() => {
+  return Math.min(alertLevel.value * 0.25, 0.75);
+});
+
+const scoutingBonus = computed(() => {
+  return 1 + scoutingLevel.value * 0.5;
+});
+
+const availableWildAnimals = computed(() => {
+  const tamedIds = tamedCompanions.value.map(c => c.id);
+  return ANIMAL_CATALOG.filter(a => !tamedIds.includes(a.id));
+});
 
 const mapGrid = ref([
   { type: 'forest', icon: '🌳', explored: true },
@@ -163,38 +307,83 @@ const addMessage = (content) => {
   const now = new Date();
   const time = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
   messageLog.value.push({ time, content });
-  // 只保留最近20条日志
   if (messageLog.value.length > 20) {
     messageLog.value.shift();
   }
 };
 
+const tameAnimal = (animal) => {
+  if (resources.value.food < animal.tameCost) {
+    ElMessage.error(`食物不足，无法驯养${animal.name}！`);
+    return;
+  }
+  ElMessageBox.confirm(
+    `驯养${animal.name}需要${animal.tameCost}食物，每日消耗${animal.upkeep}食物。确定驯养吗？`,
+    '驯养确认',
+    {
+      confirmButtonText: '确定驯养',
+      cancelButtonText: '取消',
+      type: 'info'
+    }
+  ).then(() => {
+    resources.value.food -= animal.tameCost;
+    tamedCompanions.value.push({ ...animal });
+    addMessage(`成功驯养了${animal.icon}${animal.name}！获得${animal.abilityLabel}能力加成`);
+    ElMessage.success(`驯养${animal.name}成功！`);
+  }).catch(() => {});
+};
+
+const releaseCompanion = (companion) => {
+  ElMessageBox.confirm(
+    `确定要放归${companion.name}吗？你将失去它的${companion.abilityLabel}能力加成。`,
+    '放归确认',
+    {
+      confirmButtonText: '确定放归',
+      cancelButtonText: '取消',
+      type: 'warning'
+    }
+  ).then(() => {
+    const idx = tamedCompanions.value.findIndex(c => c.id === companion.id);
+    if (idx !== -1) {
+      tamedCompanions.value.splice(idx, 1);
+    }
+    addMessage(`放归了${companion.icon}${companion.name}，失去了${companion.abilityLabel}能力加成`);
+    ElMessage.info(`${companion.name}已放归野外`);
+  }).catch(() => {});
+};
+
 const performAction = (name, cost, gain, time) => {
-  // 检查资源是否足够
+  let adjustedCost = {};
   for (const [resource, amount] of Object.entries(cost)) {
+    adjustedCost[resource] = Math.ceil(amount * carryingDiscount.value);
+  }
+
+  for (const [resource, amount] of Object.entries(adjustedCost)) {
     if (resources.value[resource] < amount) {
       ElMessage.error(`资源不足，无法${name}`);
       return false;
     }
   }
-  
-  // 消耗资源
-  for (const [resource, amount] of Object.entries(cost)) {
+
+  for (const [resource, amount] of Object.entries(adjustedCost)) {
     resources.value[resource] -= amount;
   }
-  
+
   addMessage(`开始${name}...`);
-  
-  // 模拟耗时
+
   setTimeout(() => {
-    // 获得资源
+    let adjustedGain = {};
     for (const [resource, amount] of Object.entries(gain)) {
+      adjustedGain[resource] = Math.ceil(amount * carryingMultiplier.value);
+    }
+    for (const [resource, amount] of Object.entries(adjustedGain)) {
       resources.value[resource] += amount;
     }
-    addMessage(`${name}完成！获得了${Object.entries(gain).map(([k, v]) => `${v}${k}`).join('、')}`);
+    const gainDesc = Object.entries(adjustedGain).map(([k, v]) => `${v}${k}`).join('、');
+    addMessage(`${name}完成！获得了${gainDesc}`);
     ElMessage.success(`${name}完成！`);
   }, time);
-  
+
   return true;
 };
 
@@ -232,7 +421,7 @@ const exploreCell = (index) => {
     ElMessage.info('这个区域已经探索过了');
     return;
   }
-  
+
   ElMessageBox.confirm(
     `确定要探索这个区域吗？可能会遇到危险或发现资源。`,
     '探索未知区域',
@@ -243,32 +432,51 @@ const exploreCell = (index) => {
     }
   ).then(() => {
     addMessage(`开始探索${cell.icon}区域...`);
-    
+
     setTimeout(() => {
       cell.explored = true;
-      
-      // 随机事件
+
       const random = Math.random();
+      const dangerThreshold = 0.8 + scoutingLevel.value * 0.05;
+
       if (random < 0.3) {
-        const foodGain = Math.floor(Math.random() * 20) + 10;
+        const baseGain = Math.floor(Math.random() * 20) + 10;
+        const foodGain = Math.ceil(baseGain * scoutingBonus.value);
         resources.value.food += foodGain;
         addMessage(`探索发现了食物！获得${foodGain}食物`);
         ElMessage.success(`探索发现了食物！获得${foodGain}食物`);
       } else if (random < 0.6) {
-        const woodGain = Math.floor(Math.random() * 15) + 5;
+        const baseGain = Math.floor(Math.random() * 15) + 5;
+        const woodGain = Math.ceil(baseGain * scoutingBonus.value);
         resources.value.wood += woodGain;
         addMessage(`探索发现了木材！获得${woodGain}木材`);
         ElMessage.success(`探索发现了木材！获得${woodGain}木材`);
-      } else if (random < 0.8) {
-        const stoneGain = Math.floor(Math.random() * 10) + 5;
+      } else if (random < dangerThreshold) {
+        const baseGain = Math.floor(Math.random() * 10) + 5;
+        const stoneGain = Math.ceil(baseGain * scoutingBonus.value);
         resources.value.stone += stoneGain;
         addMessage(`探索发现了石头！获得${stoneGain}石头`);
         ElMessage.success(`探索发现了石头！获得${stoneGain}石头`);
       } else {
-        resources.value.food -= 10;
-        resources.value.water -= 10;
-        addMessage(`探索遇到了危险！损失了10食物和10水`);
-        ElMessage.warning(`探索遇到了危险！损失了10食物和10水`);
+        if (alertLevel.value > 0 && Math.random() < alertLevel.value * 0.3) {
+          addMessage(`🛡️ 警戒伙伴发现了危险并发出警告！你及时避开了`);
+          ElMessage.success('警戒伙伴发现了危险，你安全避开了！');
+          const bonusFood = Math.floor(Math.random() * 10) + 5;
+          resources.value.food += bonusFood;
+          addMessage(`侦查伙伴带回了额外的${bonusFood}食物`);
+        } else {
+          const baseFoodLoss = 10;
+          const baseWaterLoss = 10;
+          const foodLoss = Math.ceil(baseFoodLoss * (1 - dangerReduction.value));
+          const waterLoss = Math.ceil(baseWaterLoss * (1 - dangerReduction.value));
+          resources.value.food -= foodLoss;
+          resources.value.water -= waterLoss;
+          const reducedMsg = dangerReduction.value > 0
+            ? `（警戒伙伴为你减少了${Math.round(dangerReduction.value * 100)}%损失）`
+            : '';
+          addMessage(`探索遇到了危险！损失了${foodLoss}食物和${waterLoss}水${reducedMsg}`);
+          ElMessage.warning(`探索遇到了危险！损失了${foodLoss}食物和${waterLoss}水`);
+        }
       }
     }, 5000);
   }).catch(() => {
@@ -276,13 +484,28 @@ const exploreCell = (index) => {
   });
 };
 
+let consumptionTimer = null;
+
 onMounted(() => {
   addMessage('欢迎来到海岛生存游戏！');
-  // 定期消耗资源
-  setInterval(() => {
-    resources.value.food -= 5;
-    resources.value.water -= 5;
-    
+  consumptionTimer = setInterval(() => {
+    const companionUpkeep = tamedCompanions.value.reduce((sum, c) => sum + c.upkeep, 0);
+    const baseFoodDrain = 5;
+    const baseWaterDrain = 5;
+    const foodDrain = Math.ceil((baseFoodDrain + companionUpkeep) * carryingDiscount.value);
+    const waterDrain = Math.ceil(baseWaterDrain * carryingDiscount.value);
+
+    resources.value.food -= foodDrain;
+    resources.value.water -= waterDrain;
+
+    if (companionUpkeep > 0) {
+      addMessage(`伙伴消耗了${companionUpkeep}食物${carryingLevel.value > 0 ? '（搬运加成减少消耗）' : ''}`);
+    }
+
+    if (alertLevel.value > 0 && Math.random() < 0.15) {
+      addMessage(`🛡️ 警戒伙伴发现了潜在威胁并驱赶了它，营地安全了`);
+    }
+
     if (resources.value.food <= 0 || resources.value.water <= 0) {
       ElMessageBox.alert(
         '你的食物或水耗尽了，游戏结束！',
@@ -296,10 +519,18 @@ onMounted(() => {
         resources.value.water = 100;
         resources.value.wood = 100;
         resources.value.stone = 100;
+        tamedCompanions.value = [];
         addMessage('重新开始游戏！');
       });
     }
-  }, 60000); // 每分钟消耗一次
+  }, 60000);
+});
+
+onUnmounted(() => {
+  if (consumptionTimer) {
+    clearInterval(consumptionTimer);
+    consumptionTimer = null;
+  }
 });
 </script>
 
@@ -368,6 +599,129 @@ onMounted(() => {
 .stat-label {
   font-size: 14px;
   color: #666;
+}
+
+.companion-panel {
+  background: white;
+  border-radius: 12px;
+  padding: 30px;
+  margin-bottom: 30px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.companion-panel h3 {
+  margin: 0 0 20px 0;
+  font-size: 24px;
+  color: #333;
+}
+
+.companion-buffs {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.buff-tag {
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: white;
+}
+
+.buff-tag:nth-child(1) {
+  background: linear-gradient(135deg, #43e97b, #38f9d7);
+}
+
+.buff-tag:nth-child(2) {
+  background: linear-gradient(135deg, #fa709a, #fee140);
+}
+
+.buff-tag:nth-child(3) {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+}
+
+.companion-section {
+  margin-bottom: 20px;
+}
+
+.companion-section:last-child {
+  margin-bottom: 0;
+}
+
+.companion-section h4 {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  color: #555;
+  border-bottom: 1px solid #eee;
+  padding-bottom: 8px;
+}
+
+.companion-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.companion-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 10px;
+  transition: all 0.3s ease;
+  border: 2px solid transparent;
+}
+
+.companion-card.tamed {
+  background: linear-gradient(135deg, #e8f8f0, #d4efdf);
+  border-color: #43e97b;
+}
+
+.companion-card.wild {
+  background: #f8f9fa;
+}
+
+.companion-card.wild:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
+  border-color: #667eea;
+}
+
+.companion-icon {
+  font-size: 42px;
+  min-width: 50px;
+  text-align: center;
+}
+
+.companion-info {
+  flex: 1;
+}
+
+.companion-name {
+  font-size: 16px;
+  font-weight: bold;
+  color: #333;
+  margin-bottom: 4px;
+}
+
+.companion-ability {
+  font-size: 13px;
+  font-weight: 600;
+  color: #667eea;
+  margin-bottom: 2px;
+}
+
+.companion-ability-desc {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 4px;
+}
+
+.companion-upkeep {
+  font-size: 12px;
+  color: #e6a23c;
 }
 
 .actions-panel {
